@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
@@ -27,6 +27,7 @@ const ResumeIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
 
 const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, hasSavedProgress, onContinue, fileEncoding, onEncodingChange }) => {
   const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDrag = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -61,11 +62,16 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, hasSave
     }
   };
 
+  const handleAreaClick = () => {
+    if (disabled) return;
+    fileInputRef.current?.click();
+  };
+
   const dropzoneClasses = `relative w-full p-10 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all duration-300 group ${
     isDragging 
       ? 'border-teal-400 bg-teal-500/10 scale-105 shadow-[0_0_30px_rgba(45,212,191,0.5)]' 
       : 'border-gray-600 hover:border-teal-400 hover:bg-gray-800/50'
-  } ${disabled ? 'opacity-50' : ''}`;
+  } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`;
 
 
   return (
@@ -78,27 +84,34 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, hasSave
             </p>
             <div className="w-full max-w-2xl">
                 <div
-                onDragEnter={handleDrag}
-                onDragOver={handleDrag}
-                onDragLeave={handleDrag}
-                onDrop={handleDrop}
-                className={dropzoneClasses}
+                    onDragEnter={handleDrag}
+                    onDragOver={handleDrag}
+                    onDragLeave={handleDrag}
+                    onDrop={handleDrop}
+                    onClick={handleAreaClick}
+                    onKeyDown={(e) => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); handleAreaClick(); } }}
+                    role="button"
+                    tabIndex={disabled ? -1 : 0}
+                    aria-label="Área de upload de arquivo. Clique ou arraste um arquivo .srt aqui."
+                    className={dropzoneClasses}
                 >
-                <input
-                    type="file"
-                    id="file-upload"
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    accept=".srt"
-                    onChange={handleFileChange}
-                    disabled={disabled}
-                />
-                <div className="flex flex-col items-center justify-center text-gray-400 transition-transform duration-300 group-hover:scale-110">
-                    <UploadIcon className="w-16 h-16 mb-4 text-gray-500 group-hover:text-teal-400 transition-colors" />
-                    <p className="text-xl font-semibold">
-                    <span className="text-teal-400">Clique para enviar</span> ou arraste e solte
-                    </p>
-                    <p className="mt-2 text-sm text-gray-500">Apenas arquivos .SRT</p>
-                </div>
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        id="file-upload"
+                        className="hidden"
+                        accept=".srt"
+                        onChange={handleFileChange}
+                        disabled={disabled}
+                        tabIndex={-1}
+                    />
+                    <div className="flex flex-col items-center justify-center text-gray-400 transition-transform duration-300 group-hover:scale-110 pointer-events-none">
+                        <UploadIcon className="w-16 h-16 mb-4 text-gray-500 group-hover:text-teal-400 transition-colors" />
+                        <p className="text-xl font-semibold">
+                        <span className="text-teal-400">Clique para enviar</span> ou arraste e solte
+                        </p>
+                        <p className="mt-2 text-sm text-gray-500">Apenas arquivos .SRT</p>
+                    </div>
                 </div>
 
                 <div className="mt-6 text-center">
