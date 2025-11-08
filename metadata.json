@@ -1,0 +1,5 @@
+{
+  "name": "Tradutor SRT Pro",
+  "description": "Uma aplicação para traduzir arquivos de legenda SRT de inglês para português do Brasil usando IA, preservando carimbos de tempo e contexto.",
+  "requestFramePermissions": []
+}
