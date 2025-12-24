@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useRef } from 'react';
 
 interface FileUploadProps {
@@ -7,6 +8,8 @@ interface FileUploadProps {
   onContinue: () => void;
   fileEncoding: string;
   onEncodingChange: (encoding: string) => void;
+  sourceLanguage: 'en' | 'es';
+  onSourceLanguageChange: (language: 'en' | 'es') => void;
 }
 
 const UploadIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
@@ -25,7 +28,7 @@ const ResumeIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     </svg>
 );
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, hasSavedProgress, onContinue, fileEncoding, onEncodingChange }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, hasSavedProgress, onContinue, fileEncoding, onEncodingChange, sourceLanguage, onSourceLanguageChange }) => {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -75,14 +78,36 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, hasSave
 
 
   return (
-    <div className="flex flex-col items-center justify-center p-8 w-full max-w-4xl glass-effect rounded-2xl animate-fade-in">
-        <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/noisy-grid.png')] opacity-5 z-0"></div>
+    <div className="flex flex-col items-center justify-center p-8 w-full max-w-5xl glass-effect rounded-2xl animate-fade-in">
         <div className="relative z-10 flex flex-col items-center w-full">
-            <h2 className="text-4xl font-bold mb-2 text-center text-transparent bg-clip-text bg-gradient-to-r from-white to-teal-300">Traduza Suas Legendas</h2>
-            <p className="text-lg text-gray-400 mb-8 text-center max-w-2xl">
-                Arraste um arquivo <code className="bg-gray-700 text-teal-300 px-1.5 py-0.5 rounded">.srt</code> para traduzir instantaneamente com o poder da IA.
-            </p>
-            <div className="w-full max-w-2xl">
+            
+            <div className="text-center mb-10 max-w-4xl mx-auto">
+                <h2 className="text-3xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-br from-white via-gray-200 to-gray-400 leading-tight drop-shadow-xl tracking-wide mb-6">
+                    O app atua como um normalizador profissional de legenda: remove CC, filtra disfluências, traduz semanticamente e aplica formatação determinística no padrão de TV e música.
+                </h2>
+                <div className="h-1 w-32 bg-teal-500 mx-auto rounded-full shadow-[0_0_15px_rgba(20,184,166,0.6)]"></div>
+            </div>
+
+            <div className="w-full max-w-2xl bg-black/40 p-8 rounded-2xl border border-white/5 shadow-2xl backdrop-blur-sm">
+                 <div className="mb-6 text-center">
+                    <label className="text-lg font-medium text-gray-300 mr-4">Idioma Original:</label>
+                    <div className="inline-flex rounded-lg shadow-sm" role="group">
+                        <button
+                            type="button"
+                            onClick={() => onSourceLanguageChange('en')}
+                            className={`px-6 py-2 text-sm font-semibold rounded-l-lg transition-colors ${sourceLanguage === 'en' ? 'bg-teal-500 text-white z-10 ring-2 ring-teal-400' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                        >
+                            Inglês
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => onSourceLanguageChange('es')}
+                            className={`px-6 py-2 text-sm font-semibold rounded-r-lg transition-colors ${sourceLanguage === 'es' ? 'bg-teal-500 text-white z-10 ring-2 ring-teal-400' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                        >
+                            Espanhol
+                        </button>
+                    </div>
+                </div>
                 <div
                     onDragEnter={handleDrag}
                     onDragOver={handleDrag}
@@ -127,7 +152,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, hasSave
                     <option value="UTF-8">UTF-8 (Padrão)</option>
                     <option value="ISO-8859-1">ISO-8859-1 / Windows-1252 (Ocidental)</option>
                   </select>
-                  <p className="text-xs text-gray-500 mt-2">Se vir caracteres estranhos como '�', tente a opção 'Ocidental'.</p>
+                  <p className="text-xs text-gray-500 mt-2">Se vir caracteres estranhos como '', tente a opção 'Ocidental'.</p>
                 </div>
 
                 {hasSavedProgress && (

@@ -1,17 +1,18 @@
-import React, { useState, useCallback, useEffect } from 'react';
+
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import FileUpload from './components/FileUpload';
 import SubtitleDisplay from './components/SubtitleDisplay';
 import Loader from './components/Loader';
 import TitleInput from './components/TitleInput';
-import { translateSrtStream } from './services/geminiService';
+import HowItWorks from './components/HowItWorks';
+import { translateSrtBatch, retranslateBlock, reformatBlock } from './services/geminiService';
 import { isValidSrt, parseSrt, SubtitleBlock, stringifySrtFromBlocks } from './utils/srtParser';
 
 export interface Movie {
   title: string;
   year: string;
   description: string;
-  posterUrl: string;
   director: string;
   genre: string;
 }
@@ -23,7 +24,6 @@ export interface Song {
   year: string;
   genre: string;
   meaning: string;
-  posterUrl: string; // Album art
 }
 
 export type ContextObject = Movie | Song;
@@ -32,30 +32,14 @@ export interface TranslationOptions {
     context: ContextObject;
     contextType: 'movie' | 'music';
     mode: 'all' | 'parts';
+    sourceLanguage: 'en' | 'es';
     chunkSize?: number;
 }
 
 type AppState = 'IDLE' | 'FILE_SELECTED' | 'TRANSLATING' | 'EDITING' | 'ERROR';
 
-const LOCAL_STORAGE_KEY = 'srtTranslatorProgress';
-
-const FileSummary: React.FC<{ fileName: string; onReset: () => void }> = ({ fileName, onReset }) => (
-  <div className="p-6 bg-gray-900/50 glass-effect rounded-2xl border border-white/10 w-full animate-fade-in">
-    <h3 className="text-xl font-bold text-gray-300 mb-4">Arquivo Selecionado</h3>
-    <div className="flex items-center gap-3 bg-gray-800 p-3 rounded-lg">
-      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-teal-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-      </svg>
-      <p className="text-md text-white truncate font-mono" title={fileName}>{fileName.replace('_pt-br.srt', '.srt')}</p>
-    </div>
-    <button
-      onClick={onReset}
-      className="w-full mt-6 px-4 py-2 bg-red-600/80 text-white font-semibold rounded-lg hover:bg-red-700 transition-all transform hover:scale-105"
-    >
-      Escolher Outro Arquivo
-    </button>
-  </div>
-);
+const LOCAL_STORAGE_KEY = 'srtTranslatorProgress_v3';
+const BATCH_SIZE = 30; // Traduzir de 30 em 30 legendas para estabilidade
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>('IDLE');
@@ -63,332 +47,217 @@ const App: React.FC = () => {
   const [subtitles, setSubtitles] = useState<SubtitleBlock[]>([]);
   const [context, setContext] = useState<ContextObject | null>(null);
   const [contextType, setContextType] = useState<'movie' | 'music'>('movie');
-  const [posterUrl, setPosterUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [hasSavedProgress, setHasSavedProgress] = useState(false);
   const [fileEncoding, setFileEncoding] = useState('UTF-8');
+  const [sourceLanguage, setSourceLanguage] = useState<'en' | 'es'>('en');
+  const [showHowItWorks, setShowHowItWorks] = useState(false);
   
-  // State for chunked translation
-  const [translationMode, setTranslationMode] = useState<'all' | 'parts'>('all');
-  const [chunkSize, setChunkSize] = useState(100);
-  const [nextBlockToTranslate, setNextBlockToTranslate] = useState(0);
+  const stopTranslationRef = useRef(false);
 
-  // Check for saved progress on initial load
   useEffect(() => {
-    try {
-      const savedProgress = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (savedProgress) {
-        setHasSavedProgress(true);
-      }
-    } catch (e) {
-      console.error("Falha ao ler do localStorage", e);
-    }
+    const savedProgress = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (savedProgress) setHasSavedProgress(true);
   }, []);
 
-  // Save progress whenever it changes
   useEffect(() => {
-    // Don't save if we are in the initial state or have nothing to save
-    if (appState === 'IDLE' || !originalSrt) {
-      return;
-    }
-    try {
-      const progressToSave = {
-        appState,
-        originalSrt,
-        subtitles,
-        context,
-        contextType,
-        posterUrl,
-        fileName,
-        progress,
-        translationMode,
-        chunkSize,
-        nextBlockToTranslate,
-      };
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(progressToSave));
-    } catch (e) {
-      console.error("Falha ao salvar o progresso no localStorage", e);
-    }
-  }, [appState, subtitles, context, contextType, posterUrl, fileName, progress, originalSrt, translationMode, chunkSize, nextBlockToTranslate]);
+    if (appState === 'IDLE' || !originalSrt) return;
+    const subtitlesToSave = subtitles.map(({ isUpdating, ...rest }) => rest);
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({
+      appState: appState === 'TRANSLATING' ? 'EDITING' : appState,
+      originalSrt, subtitles: subtitlesToSave, context, contextType, fileName, progress, sourceLanguage
+    }));
+  }, [appState, subtitles, context, contextType, fileName, progress, originalSrt, sourceLanguage]);
 
-  const cleanFileNameForQuery = (name: string): string => {
-    let cleanedName = name.replace(/\.srt$/i, '');
-    const yearMatch = cleanedName.match(/\b(19|20)\d{2}\b/);
-    if (yearMatch && yearMatch.index) {
-        cleanedName = cleanedName.substring(0, yearMatch.index);
-    }
-    cleanedName = cleanedName.replace(/[\._]/g, ' ');
-    const tags = [
-        '1080p', '720p', '480p', 'dvdrip', 'x264', 'x265', 'h264', 'h265',
-        'web-dl', 'web dl', 'webrip', 'hdrip', 'brrip', 'bdrip', 'hdtv', 'bluray',
-        'aac', 'ac3', 'dts', 'extended', 'unrated', 'remastered', 'directors cut', "director's cut",
-        's\\d{1,2}e\\d{1,2}', 'eng', 'en', 'pt-br', 'ptbr',
-        'official video', 'lyrics', 'lyric video', 'official music video'
-    ];
-    const tagsRegex = new RegExp(`\\b(${tags.join('|')})\\b`, 'gi');
-    cleanedName = cleanedName.replace(tagsRegex, '');
-    cleanedName = cleanedName.replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, ''); // remove brackets and parentheses
-    return cleanedName.replace(/[_-]$/g, '').replace(/\s+/g, ' ').trim();
-  };
-  
   const handleFileSelect = useCallback(async (file: File) => {
-    setError(null);
     const reader = new FileReader();
     reader.onload = async (e) => {
       const content = e.target?.result as string;
-      if (!content) {
-        setError('Não foi possível ler o conteúdo do arquivo.');
-        setAppState('ERROR');
-        return;
-      }
       if (!isValidSrt(content)) {
-        setError('Formato de arquivo SRT inválido. Por favor, envie um arquivo .srt válido.');
+        setError('Arquivo SRT inválido.');
         setAppState('ERROR');
         return;
       }
       setOriginalSrt(content);
+      setSubtitles(parseSrt(content));
       setFileName(`${file.name.replace(/\.srt$/, '')}_pt-br.srt`);
-      const cleanedTitle = cleanFileNameForQuery(file.name);
       
-      // We set a temporary context object here to pass the title to TitleInput
-      setContext({ title: cleanedTitle, year: '', description: '', posterUrl: '', director: '', genre: '' });
-
+      const cleanName = file.name.replace(/\.srt$/i, '').replace(/[\._]/g, ' ').replace(/\d{4}.*/, '').trim();
+      setContext({ title: cleanName, year: '', description: '', director: '', genre: '' });
       setAppState('FILE_SELECTED');
-    };
-    reader.onerror = () => {
-      setError('Erro ao ler o arquivo.');
-      setAppState('ERROR');
     };
     reader.readAsText(file, fileEncoding);
   }, [fileEncoding]);
-  
+
   const startTranslation = async (options: TranslationOptions) => {
     setError(null);
     setContext(options.context);
     setContextType(options.contextType);
-    setPosterUrl(options.context.posterUrl);
-    setTranslationMode(options.mode);
-    setChunkSize(options.chunkSize || 100);
-
-    const allBlocks = parseSrt(originalSrt);
-    setSubtitles(allBlocks);
+    setSourceLanguage(options.sourceLanguage);
+    stopTranslationRef.current = false;
+    
+    const allBlocks = subtitles.length > 0 ? subtitles : parseSrt(originalSrt);
     setProgress({ current: 0, total: allBlocks.length });
     
-    if (options.mode === 'all') {
-      await translateContent(originalSrt, options.context, options.contextType, 0);
-    } else {
-      setNextBlockToTranslate(0);
-      setAppState('EDITING'); // Go directly to editing screen for parts mode
-    }
+    await translateInChunks(allBlocks, options.context, options.contextType, options.sourceLanguage);
   };
 
-  const translateContent = async (srtToTranslate: string, currentContext: ContextObject, type: 'movie' | 'music', translatedCountOffset: number) => {
+  const translateInChunks = async (allBlocks: SubtitleBlock[], currentContext: ContextObject, type: 'movie' | 'music', language: 'en' | 'es') => {
     setAppState('TRANSLATING');
+    
     try {
-      const stream = translateSrtStream(srtToTranslate, currentContext, type);
-      for await (const srtBlockText of stream) {
-        const tempParsed = parseSrt(srtBlockText);
-        if (tempParsed.length > 0) {
-            const translatedBlock = tempParsed[0];
-            setSubtitles(prevSubs => 
-                prevSubs.map(sub => 
-                    sub.index === translatedBlock.index 
-                    ? { ...sub, translatedText: translatedBlock.originalText }
-                    : sub
-                )
-            );
-            setProgress(prev => ({ ...prev, current: prev.current + 1 }));
+        for (let i = 0; i < allBlocks.length; i += BATCH_SIZE) {
+            if (stopTranslationRef.current) break;
+
+            const chunk = allBlocks.slice(i, i + BATCH_SIZE);
+            const chunkSrt = stringifySrtFromBlocks(chunk);
+            
+            const translatedChunkText = await translateSrtBatch(chunkSrt, currentContext, type, language);
+            const parsedTranslatedChunk = parseSrt(translatedChunkText);
+
+            setSubtitles(prev => {
+                const newSubs = [...prev];
+                parsedTranslatedChunk.forEach(tBlock => {
+                    const indexInOriginal = newSubs.findIndex(s => s.index === tBlock.index);
+                    if (indexInOriginal !== -1) {
+                        newSubs[indexInOriginal] = { 
+                            ...newSubs[indexInOriginal], 
+                            translatedText: tBlock.originalText // parseSrt coloca o texto em originalText
+                        };
+                    }
+                });
+                return newSubs;
+            });
+
+            setProgress(prev => ({ ...prev, current: Math.min(prev.total, i + BATCH_SIZE) }));
+            
+            // Pequeno delay para evitar rate limiting agressivo entre lotes
+            if (i + BATCH_SIZE < allBlocks.length) {
+                await new Promise(r => setTimeout(r, 1000));
+            }
         }
-      }
-      setAppState('EDITING');
-    } catch (err) {
-      console.error(err);
-      setError('Falha ao traduzir a legenda. O modelo de IA pode estar sobrecarregado. Você pode tentar continuar a tradução.');
-      setAppState('ERROR');
-    }
-  };
-  
-  const handleTranslateNextChunk = async () => {
-    if (!context) return;
-    const blocksToTranslate = subtitles.slice(nextBlockToTranslate, nextBlockToTranslate + chunkSize);
-    if (blocksToTranslate.length === 0) return;
-
-    const srtChunk = stringifySrtFromBlocks(blocksToTranslate);
-    const alreadyTranslatedCount = subtitles.filter(s => !!s.translatedText).length;
-    await translateContent(srtChunk, context, contextType, alreadyTranslatedCount);
-    setNextBlockToTranslate(nextBlockToTranslate + chunkSize);
-  }
-
-  const handleResumeTranslation = async () => {
-    if (!context || subtitles.length === 0) {
-        handleReset();
-        return;
-    }
-    const untranslatedBlocks = subtitles.filter(s => !s.translatedText);
-    if (untranslatedBlocks.length === 0) {
         setAppState('EDITING');
-        return;
+    } catch (err: any) {
+        console.error(err);
+        setError(`Falha ao traduzir lote: ${err.message}. Tente continuar.`);
+        setAppState('ERROR');
     }
-    const srtToResume = stringifySrtFromBlocks(untranslatedBlocks);
-    const alreadyTranslatedCount = subtitles.length - untranslatedBlocks.length;
-    await translateContent(srtToResume, context, contextType, alreadyTranslatedCount);
   };
-
-  const handleContinue = useCallback(() => {
-    try {
-        const savedProgressJSON = localStorage.getItem(LOCAL_STORAGE_KEY);
-        if (savedProgressJSON) {
-            const savedProgress = JSON.parse(savedProgressJSON);
-            setAppState(savedProgress.appState || 'EDITING');
-            setOriginalSrt(savedProgress.originalSrt || '');
-            setSubtitles(savedProgress.subtitles || []);
-            setContext(savedProgress.context || null);
-            setContextType(savedProgress.contextType || 'movie');
-            setPosterUrl(savedProgress.posterUrl || null);
-            setFileName(savedProgress.fileName || '');
-            setProgress(savedProgress.progress || { current: 0, total: 0 });
-            setTranslationMode(savedProgress.translationMode || 'all');
-            setChunkSize(savedProgress.chunkSize || 100);
-            setNextBlockToTranslate(savedProgress.nextBlockToTranslate || 0);
-            setHasSavedProgress(false); 
-        } else {
-            setError("Não foi possível encontrar o progresso salvo.");
-            setAppState('ERROR');
-        }
-    } catch (e) {
-        console.error("Falha ao carregar ou analisar o progresso salvo", e);
-        setError("O progresso salvo está corrompido e não pôde ser carregado. Começando do zero.");
-        localStorage.removeItem(LOCAL_STORAGE_KEY);
-        setHasSavedProgress(false);
-        setAppState('IDLE');
-    }
-  }, []);
 
   const handleSubtitleChange = useCallback((index: number, newText: string) => {
-    setSubtitles(prev => 
-        prev.map(sub => sub.index === index ? { ...sub, translatedText: newText } : sub)
-    );
+    setSubtitles(prev => prev.map(sub => sub.index === index ? { ...sub, translatedText: newText } : sub));
   }, []);
 
   const handleReset = () => {
     setAppState('IDLE');
-    setOriginalSrt('');
     setSubtitles([]);
-    setContext(null);
-    setPosterUrl(null);
-    setError(null);
-    setFileName('');
-    setProgress({ current: 0, total: 0 });
-    setNextBlockToTranslate(0);
-    try {
-      localStorage.removeItem(LOCAL_STORAGE_KEY);
-      setHasSavedProgress(false);
-    } catch (e) {
-      console.error("Falha ao limpar o localStorage", e);
-    }
-  };
-
-  const renderContent = () => {
-    switch (appState) {
-      case 'IDLE':
-        return <FileUpload 
-                  onFileSelect={handleFileSelect} 
-                  disabled={false} 
-                  hasSavedProgress={hasSavedProgress} 
-                  onContinue={handleContinue} 
-                  fileEncoding={fileEncoding}
-                  onEncodingChange={setFileEncoding}
-                />;
-      case 'FILE_SELECTED':
-        return context && (
-            <div className="w-full max-w-6xl mx-auto flex flex-col lg:flex-row gap-8 items-start animate-fade-in">
-                <div className="lg:w-1/3 w-full">
-                    <FileSummary fileName={fileName} onReset={handleReset} />
-                </div>
-                <div className="lg:w-2/3 w-full">
-                    <TitleInput
-                        initialQuery={context.title}
-                        onStartTranslation={startTranslation}
-                    />
-                </div>
-            </div>
-        );
-      case 'TRANSLATING':
-        return (
-          <div className="w-full max-w-7xl mx-auto flex flex-col items-center gap-6 animate-fade-in">
-            <Loader contextTitle={context?.title} progress={progress} posterUrl={posterUrl} />
-            <SubtitleDisplay
-              subtitles={subtitles}
-              fileName={fileName}
-              onReset={handleReset}
-              onSubtitleChange={handleSubtitleChange}
-              isTranslating={true}
-              posterUrl={posterUrl}
-              translationMode={translationMode}
-              onTranslateNextChunk={handleTranslateNextChunk}
-              nextChunkSize={chunkSize}
-              hasMoreToTranslate={nextBlockToTranslate < subtitles.length}
-            />
-          </div>
-        );
-      case 'EDITING':
-        return (
-          <div className="w-full max-w-7xl mx-auto flex flex-col items-center gap-6 animate-fade-in">
-            <SubtitleDisplay
-              subtitles={subtitles}
-              fileName={fileName}
-              onReset={handleReset}
-              onSubtitleChange={handleSubtitleChange}
-              isTranslating={false}
-              posterUrl={posterUrl}
-              translationMode={translationMode}
-              onTranslateNextChunk={handleTranslateNextChunk}
-              nextChunkSize={chunkSize}
-              hasMoreToTranslate={nextBlockToTranslate < subtitles.length && subtitles.some(s => !s.translatedText)}
-            />
-          </div>
-        );
-      case 'ERROR':
-        const canResume = subtitles.length > 0 && !!context;
-        return (
-          <div className="text-center p-8 glass-effect rounded-lg animate-fade-in">
-            <p className="text-red-400 font-semibold text-xl">Ocorreu um Erro</p>
-            <p className="text-red-300 mt-2 max-w-xl mx-auto">{error}</p>
-            <div className="mt-6 flex flex-col sm:flex-row justify-center items-center gap-4">
-              {canResume && (
-                 <button
-                    onClick={handleResumeTranslation}
-                    className="px-4 py-2 bg-yellow-600 text-white font-bold rounded-lg hover:bg-yellow-700 transition-transform transform hover:scale-105"
-                  >
-                    Continuar Tradução
-                  </button>
-              )}
-              <button
-                onClick={handleReset}
-                className="px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-transform transform hover:scale-105"
-              >
-                {canResume ? 'Começar do Zero' : 'Tentar Novamente'}
-              </button>
-            </div>
-          </div>
-        );
-      default:
-        return null;
-    }
+    localStorage.removeItem(LOCAL_STORAGE_KEY);
   };
 
   return (
-    <div className="min-h-screen text-gray-200 font-sans flex flex-col">
-      <Header />
-      <main className="flex-grow container mx-auto px-4 py-8 md:py-12">
+    <div className="min-h-screen text-gray-200 font-sans flex flex-col bg-gray-950">
+      <Header onShowHowItWorks={() => setShowHowItWorks(true)} />
+      {showHowItWorks && <HowItWorks onClose={() => setShowHowItWorks(false)} />}
+      <main className="flex-grow container mx-auto px-4 py-8">
         <div className="flex justify-center items-center h-full">
-          {renderContent()}
+          {appState === 'IDLE' && (
+            <FileUpload 
+              onFileSelect={handleFileSelect} 
+              disabled={false} 
+              hasSavedProgress={hasSavedProgress} 
+              onContinue={() => {
+                const saved = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY)!);
+                setAppState(saved.appState);
+                setSubtitles(saved.subtitles);
+                setOriginalSrt(saved.originalSrt);
+                setContext(saved.context);
+                setFileName(saved.fileName);
+                setProgress(saved.progress);
+              }} 
+              fileEncoding={fileEncoding}
+              onEncodingChange={setFileEncoding}
+              sourceLanguage={sourceLanguage}
+              onSourceLanguageChange={setSourceLanguage}
+            />
+          )}
+          {appState === 'FILE_SELECTED' && context && (
+            <div className="w-full max-w-4xl mx-auto animate-fade-in">
+                <TitleInput initialQuery={context.title} onStartTranslation={startTranslation} sourceLanguage={sourceLanguage} />
+                <button onClick={handleReset} className="mt-4 text-gray-500 hover:text-white block mx-auto text-sm">Escolher outro arquivo</button>
+            </div>
+          )}
+          {appState === 'TRANSLATING' && (
+            <div className="w-full max-w-4xl mx-auto flex flex-col items-center">
+                <Loader progress={progress} onStop={() => stopTranslationRef.current = true} />
+                <div className="mt-8 w-full">
+                    <SubtitleDisplay 
+                        subtitles={subtitles} 
+                        fileName={fileName} 
+                        onReset={handleReset} 
+                        onSubtitleChange={handleSubtitleChange} 
+                        isTranslating={true} 
+                        translationMode="all" 
+                        onTranslateNextChunk={() => {}} 
+                        onResumeTranslation={() => {}} 
+                        nextChunkSize={0} 
+                        hasMoreToTranslate={false} 
+                        onRetranslateBlock={() => {}} 
+                        onReformatBlock={() => {}} 
+                    />
+                </div>
+            </div>
+          )}
+          {appState === 'EDITING' && (
+            <SubtitleDisplay 
+                subtitles={subtitles} 
+                fileName={fileName} 
+                onReset={handleReset} 
+                onSubtitleChange={handleSubtitleChange} 
+                isTranslating={false} 
+                translationMode="all" 
+                onTranslateNextChunk={() => {}} 
+                onResumeTranslation={() => {
+                    const remaining = subtitles.filter(s => !s.translatedText);
+                    if (remaining.length > 0 && context) {
+                        translateInChunks(subtitles, context, contextType, sourceLanguage);
+                    }
+                }} 
+                nextChunkSize={0} 
+                hasMoreToTranslate={subtitles.some(s => !s.translatedText)} 
+                onRetranslateBlock={async (idx) => {
+                    const block = subtitles.find(s => s.index === idx);
+                    if (!block || !context) return;
+                    setSubtitles(prev => prev.map(s => s.index === idx ? {...s, isUpdating: true} : s));
+                    const res = await retranslateBlock(block.originalText, context, contextType, sourceLanguage);
+                    setSubtitles(prev => prev.map(s => s.index === idx ? {...s, translatedText: res, isUpdating: false} : s));
+                }} 
+                onReformatBlock={async (idx) => {
+                    const block = subtitles.find(s => s.index === idx);
+                    if (!block || !context) return;
+                    setSubtitles(prev => prev.map(s => s.index === idx ? {...s, isUpdating: true} : s));
+                    const res = await reformatBlock(block.translatedText || '', context, contextType);
+                    setSubtitles(prev => prev.map(s => s.index === idx ? {...s, translatedText: res, isUpdating: false} : s));
+                }} 
+            />
+          )}
+          {appState === 'ERROR' && (
+            <div className="text-center p-10 glass-effect rounded-2xl">
+                <h3 className="text-2xl font-bold text-red-400 mb-2">Ops! Ocorreu um erro</h3>
+                <p className="text-gray-400 mb-6">{error}</p>
+                <div className="flex gap-4 justify-center">
+                    <button onClick={() => {
+                        if (context) translateInChunks(subtitles, context, contextType, sourceLanguage);
+                    }} className="px-6 py-2 bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors">Tentar de onde parou</button>
+                    <button onClick={handleReset} className="px-6 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">Recomeçar</button>
+                </div>
+            </div>
+          )}
         </div>
       </main>
-      <footer className="text-center py-4 text-gray-500 text-sm">
-        <p>Desenvolvido com Google Gemini</p>
+      <footer className="py-4 text-center text-gray-600 text-xs border-t border-white/5">
+        Tradutor SRT Pro • Chunked Processing v3.0
       </footer>
     </div>
   );

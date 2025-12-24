@@ -1,21 +1,23 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 
 interface LoaderProps {
   contextTitle?: string;
-  posterUrl?: string | null;
   progress: {
     current: number;
     total: number;
   };
+  isFallback?: boolean;
+  onStop?: () => void;
 }
 
-const DownloadIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+const StopIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2-H5z"/>
+        <path d="M6 6h12v12H6z"/>
     </svg>
 );
 
-const Loader: React.FC<LoaderProps> = ({ contextTitle, posterUrl, progress }) => {
+const Loader: React.FC<LoaderProps> = ({ contextTitle, progress, isFallback, onStop }) => {
   const [eta, setEta] = useState<string | null>(null);
   const startTimeRef = useRef<number | null>(null);
   const { current, total } = progress;
@@ -63,31 +65,8 @@ const Loader: React.FC<LoaderProps> = ({ contextTitle, posterUrl, progress }) =>
     ? Math.round((current / total) * 100)
     : 0;
 
-  const handleDownloadPoster = () => {
-    if (posterUrl) {
-      window.open(posterUrl, '_blank');
-    }
-  };
-
   return (
-    <div className="flex flex-col items-center justify-center p-8 text-center glass-effect rounded-2xl w-full max-w-3xl pulsing-glow">
-      <div className="w-full flex flex-col md:flex-row items-center justify-center gap-8">
-        {posterUrl && (
-          <div className="flex-shrink-0 text-center animate-fade-in">
-            <img 
-              src={posterUrl} 
-              alt={contextTitle} 
-              className="rounded-lg shadow-lg w-40 h-auto object-cover border-4 border-gray-700/50"
-            />
-            <button
-              onClick={handleDownloadPoster}
-              className="mt-4 flex items-center justify-center gap-2 w-full px-4 py-2 text-sm bg-gray-700/80 text-white font-semibold rounded-lg hover:bg-gray-700 transition-all transform hover:scale-105"
-            >
-              <DownloadIcon className="w-4 h-4" />
-              Baixar Pôster
-            </button>
-          </div>
-        )}
+    <div className="flex flex-col items-center justify-center p-8 text-center glass-effect rounded-2xl w-full max-w-3xl pulsing-glow relative">
         <div className="flex flex-col items-center text-center w-full max-w-md">
             <div className="w-16 h-16 border-4 border-dashed rounded-full animate-spin border-teal-400"></div>
             <h2 className="text-2xl font-semibold mt-6 text-transparent bg-clip-text bg-gradient-to-r from-white to-teal-300">Traduzindo Legendas...</h2>
@@ -98,9 +77,15 @@ const Loader: React.FC<LoaderProps> = ({ contextTitle, posterUrl, progress }) =>
                 }
             </p>
             
-            {progress.current === 0 && progress.total > 0 && (
+            {progress.current === 0 && progress.total > 0 && !isFallback && (
                 <p className="text-yellow-300 mt-4 text-sm font-semibold animate-pulse">
                     Preparando a tradução... Isso pode levar alguns segundos.
+                </p>
+            )}
+
+            {isFallback && (
+                <p className="text-yellow-300 mt-4 text-sm font-semibold animate-pulse">
+                    O modelo principal está ocupado. Tentando com um modelo alternativo...
                 </p>
             )}
 
@@ -126,8 +111,17 @@ const Loader: React.FC<LoaderProps> = ({ contextTitle, posterUrl, progress }) =>
                     <p className="font-mono text-teal-300 mt-4">Iniciando tradução...</p>
                 )}
             </div>
+            
+            {onStop && (
+                <button 
+                    onClick={onStop}
+                    className="mt-6 flex items-center gap-2 px-4 py-2 bg-red-500/20 text-red-300 border border-red-500/50 rounded-lg hover:bg-red-500/40 transition-colors text-sm font-semibold"
+                >
+                    <StopIcon className="w-4 h-4" />
+                    Pausar / Parar Agora
+                </button>
+            )}
         </div>
-      </div>
     </div>
   );
 };

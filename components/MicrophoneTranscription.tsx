@@ -60,6 +60,7 @@ const MicrophoneTranscription: React.FC<MicrophoneTranscriptionProps> = ({ onBac
     const [translatedText, setTranslatedText] = useState('');
     const [isTranslating, setIsTranslating] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [sourceLanguage, setSourceLanguage] = useState<'en' | 'es'>('en');
 
     const sessionRef = useRef<LiveSession | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -75,11 +76,19 @@ const MicrophoneTranscription: React.FC<MicrophoneTranscriptionProps> = ({ onBac
         fullTranscriptRef.current = '';
 
         try {
+            const API_KEY = process.env.API_KEY;
+            if (!API_KEY) {
+                setError("A chave de API não foi configurada. Não é possível usar a transcrição.");
+                console.error("API_KEY environment variable is not set.");
+                return;
+            }
+
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             streamRef.current = stream;
             
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+            const ai = new GoogleGenAI({ apiKey: API_KEY });
 
+            const langName = sourceLanguage === 'en' ? 'English' : 'Spanish';
             const sessionPromise = ai.live.connect({
                 model: 'gemini-2.5-flash-native-audio-preview-09-2025',
                 callbacks: {
@@ -132,7 +141,7 @@ const MicrophoneTranscription: React.FC<MicrophoneTranscriptionProps> = ({ onBac
                     },
                 },
                 config: {
-                    systemInstruction: "Your task is to act as a silent transcription service. You must transcribe the user's spoken audio into text in real-time. Do not generate any audio output or spoken response yourself. Only provide the text transcription.",
+                    systemInstruction: `Your task is to act as a silent transcription service. You must transcribe the user's spoken audio in ${langName} into text in real-time. Do not generate any audio output or spoken response yourself. Only provide the text transcription.`,
                     responseModalities: [Modality.AUDIO],
                     inputAudioTranscription: {},
                 },
@@ -184,7 +193,7 @@ const MicrophoneTranscription: React.FC<MicrophoneTranscriptionProps> = ({ onBac
         setIsTranslating(true);
         setError(null);
         try {
-            const translation = await translateText(transcript);
+            const translation = await translateText(transcript, sourceLanguage);
             setTranslatedText(translation);
         } catch (err) {
             setError('Falha ao traduzir o texto. Por favor, tente novamente.');
@@ -207,6 +216,28 @@ const MicrophoneTranscription: React.FC<MicrophoneTranscriptionProps> = ({ onBac
                 </button>
             </div>
             
+            <div className="mb-6 text-center">
+                <label className="text-lg font-medium text-gray-300 mr-4">Idioma da Fala:</label>
+                <div className="inline-flex rounded-lg shadow-sm" role="group">
+                    <button
+                        type="button"
+                        onClick={() => setSourceLanguage('en')}
+                        disabled={isRecording}
+                        className={`px-6 py-2 text-sm font-semibold rounded-l-lg transition-colors ${sourceLanguage === 'en' ? 'bg-purple-600 text-white z-10 ring-2 ring-purple-400' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                        Inglês
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setSourceLanguage('es')}
+                        disabled={isRecording}
+                        className={`px-6 py-2 text-sm font-semibold rounded-r-lg transition-colors ${sourceLanguage === 'es' ? 'bg-purple-600 text-white z-10 ring-2 ring-purple-400' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                        Espanhol
+                    </button>
+                </div>
+            </div>
+            
             <div className="flex justify-center mb-6">
                 {!isRecording ? (
                     <button onClick={startRecording} className="flex items-center gap-3 px-8 py-4 bg-teal-500 text-white font-bold rounded-full text-lg hover:bg-teal-600 transition-all transform hover:scale-105 shadow-lg shadow-teal-500/30">
@@ -227,7 +258,7 @@ const MicrophoneTranscription: React.FC<MicrophoneTranscriptionProps> = ({ onBac
                 {/* Transcription Box */}
                 <div className="flex flex-col glass-effect p-4 rounded-lg">
                     <div className="flex justify-between items-center mb-2">
-                        <h3 className="text-lg font-semibold text-gray-300">Transcrição (Inglês)</h3>
+                        <h3 className="text-lg font-semibold text-gray-300">Transcrição</h3>
                         <button onClick={() => handleCopy(transcript)} disabled={!transcript} className="flex items-center gap-1 text-sm text-gray-400 hover:text-white disabled:opacity-50 transition-colors">
                             <CopyIcon className="w-4 h-4" />
                             Copiar

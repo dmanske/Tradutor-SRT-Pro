@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { searchMovie, searchSong } from '../services/geminiService';
 import type { Movie, Song, ContextObject, TranslationOptions } from '../App';
@@ -5,6 +6,7 @@ import type { Movie, Song, ContextObject, TranslationOptions } from '../App';
 interface TitleInputProps {
   initialQuery: string;
   onStartTranslation: (options: TranslationOptions) => void;
+  sourceLanguage: 'en' | 'es';
 }
 
 const SearchIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
@@ -13,18 +15,18 @@ const SearchIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   </svg>
 );
 
-const MovieIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
-  <svg {...props} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>
+const ExternalLinkIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+  <svg {...props} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+    <polyline points="15 3 21 3 21 9"></polyline>
+    <line x1="10" y1="14" x2="21" y2="3"></line>
+  </svg>
 );
 
-const MusicIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
-  <svg {...props} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-);
-
-
-const TitleInput: React.FC<TitleInputProps> = ({ initialQuery, onStartTranslation }) => {
+const TitleInput: React.FC<TitleInputProps> = ({ initialQuery, onStartTranslation, sourceLanguage }) => {
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<ContextObject[]>([]);
+  const [sources, setSources] = useState<{uri: string, title: string}[]>([]);
   const [contentType, setContentType] = useState<'movie' | 'music' | null>(null);
   const [searchState, setSearchState] = useState<'CHOOSING_TYPE' | 'SEARCHING' | 'NO_RESULTS' | 'RESULTS' | 'CONTEXT_SELECTED'>('CHOOSING_TYPE');
   const [error, setError] = useState<string | null>(null);
@@ -36,21 +38,17 @@ const TitleInput: React.FC<TitleInputProps> = ({ initialQuery, onStartTranslatio
       setSearchState('SEARCHING');
       try {
         const searchFn = type === 'movie' ? searchMovie : searchSong;
-        const searchResults = await searchFn(currentQuery);
+        const { results: searchResults, sources: searchSources } = await searchFn(currentQuery);
 
+        setSources(searchSources);
         if (searchResults.length > 0) {
           setResults(searchResults);
-          setSelectedContext(searchResults[0]); 
-          setSearchState('CONTEXT_SELECTED');
+          setSearchState('RESULTS');
         } else {
           setSearchState('NO_RESULTS');
         }
       } catch (err) {
-        if (err instanceof Error) {
-          setError(err.message);
-        } else {
-          setError('Ocorreu um erro desconhecido.');
-        }
+        setError(err instanceof Error ? err.message : 'Erro ao buscar contexto.');
         setSearchState('NO_RESULTS');
       }
   };
@@ -63,26 +61,7 @@ const TitleInput: React.FC<TitleInputProps> = ({ initialQuery, onStartTranslatio
   const handleManualSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!contentType) return;
-    setSearchState('SEARCHING');
-    try {
-      const searchFn = contentType === 'movie' ? searchMovie : searchSong;
-      const searchResults = await searchFn(query);
-
-      if (searchResults.length === 0) {
-        setResults([]);
-        setSearchState('NO_RESULTS');
-      } else {
-        setResults(searchResults);
-        setSearchState('RESULTS');
-      }
-    } catch(err) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Ocorreu um erro desconhecido.');
-      }
-      setSearchState('RESULTS');
-    }
+    performSearch(query, contentType);
   };
 
   const handleContextSelect = (context: ContextObject) => {
@@ -92,174 +71,114 @@ const TitleInput: React.FC<TitleInputProps> = ({ initialQuery, onStartTranslatio
 
   const handleStart = (mode: 'all' | 'parts') => {
     if (!selectedContext || !contentType) return;
-    onStartTranslation({ context: selectedContext, contextType: contentType, mode, chunkSize });
+    onStartTranslation({ context: selectedContext, contextType: contentType, mode, chunkSize, sourceLanguage });
   };
-  
-  const handleTranslateWithoutContext = () => {
-    if (!contentType) return;
-    const contextWithoutContext: Movie | Song = contentType === 'movie' 
-      ? { title: initialQuery, year: '', description: '', posterUrl: '', director: '', genre: '' }
-      : { title: initialQuery, artist: 'Desconhecido', album: '', year: '', genre: '', meaning: '', posterUrl: '' };
-    handleContextSelect(contextWithoutContext);
-  };
-
-  const renderInitialChoice = () => (
-    <div className="text-center animate-fade-in">
-        <h3 className="text-2xl font-bold mb-6 text-gray-200">Qual é o tipo de conteúdo?</h3>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <button
-                onClick={() => handleContentTypeSelect('movie')}
-                className="flex-1 flex flex-col items-center gap-3 p-6 bg-gray-800/50 border-2 border-transparent hover:border-teal-500 rounded-lg transition-all transform hover:scale-105"
-            >
-                <MovieIcon className="w-12 h-12 text-teal-400" />
-                <span className="text-xl font-semibold">Filme / Série</span>
-            </button>
-            <button
-                onClick={() => handleContentTypeSelect('music')}
-                className="flex-1 flex flex-col items-center gap-3 p-6 bg-gray-800/50 border-2 border-transparent hover:border-purple-500 rounded-lg transition-all transform hover:scale-105"
-            >
-                <MusicIcon className="w-12 h-12 text-purple-400" />
-                <span className="text-xl font-semibold">Música</span>
-            </button>
-        </div>
-    </div>
-  )
-
-  const renderLoading = () => (
-     <div className="flex flex-col items-center justify-center p-8 text-center min-h-[200px]">
-        <div className="w-12 h-12 border-4 border-dashed rounded-full animate-spin border-teal-400"></div>
-        <p className="text-gray-300 mt-4 text-lg">Buscando contexto para <span className="font-bold text-teal-300">"{initialQuery}"</span>...</p>
-    </div>
-  );
-
-  const renderNoResults = () => (
-    <div className="text-center p-6 bg-gray-900/30 border border-yellow-500/30 rounded-lg animate-fade-in">
-        <p className="text-yellow-300 font-semibold text-xl">Contexto não encontrado</p>
-        <p className="text-yellow-400/80 text-md mt-2">Não foi possível encontrar um(a) {contentType === 'movie' ? 'filme ou série' : 'música'} para "{initialQuery}".</p>
-        {error && <p className="text-red-400 mt-2">{error}</p>}
-        <div className="mt-6 flex flex-col sm:flex-row justify-center items-center gap-4">
-            <button 
-              onClick={handleTranslateWithoutContext} 
-              className="px-5 py-3 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors w-full sm:w-auto"
-            >
-                Traduzir sem Contexto
-            </button>
-            <button 
-              onClick={() => { setQuery(initialQuery); setSearchState('RESULTS'); }}
-              className="px-5 py-3 bg-yellow-600 text-white font-bold rounded-lg hover:bg-yellow-700 transition-colors w-full sm:w-auto"
-            >
-                Buscar Manualmente
-            </button>
-        </div>
-    </div>
-  );
-
-  const renderManualSearch = () => (
-     <div className="w-full animate-fade-in">
-        <h3 className="text-xl font-semibold mb-4 text-center text-gray-300">Buscar contexto manualmente</h3>
-        <form onSubmit={handleManualSearch} className="flex gap-2">
-            <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="flex-grow w-full px-4 py-3 bg-gray-900/50 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 focus:outline-none transition"
-                placeholder={contentType === 'movie' ? 'ex: The Matrix' : 'ex: Queen Bohemian Rhapsody'}
-            />
-            <button
-                type="submit"
-                className="flex items-center justify-center gap-2 px-6 py-3 bg-teal-500 text-white font-bold rounded-lg hover:bg-teal-600 transition-all transform hover:scale-105 shadow-lg shadow-teal-500/20"
-            >
-                <SearchIcon className="w-5 h-5" />
-                Buscar
-            </button>
-        </form>
-
-        {results.length > 0 ? (
-          <div className="space-y-3 mt-4 max-h-[50vh] overflow-y-auto pr-2">
-            <h4 className="text-lg font-semibold text-gray-300">Resultados da busca:</h4>
-            {results.map((item, index) => (
-              <button key={index} onClick={() => handleContextSelect(item)} className="w-full flex items-start gap-4 p-3 bg-gray-800/50 hover:bg-teal-900/30 rounded-lg text-left transition-all duration-300 border border-white/10 hover:border-teal-500 transform hover:scale-[1.02]">
-                <img src={item.posterUrl} alt={item.title} className="w-20 h-auto object-cover rounded-md flex-shrink-0 bg-gray-600" />
-                <div>
-                  <h4 className="font-bold text-teal-300">
-                    {'artist' in item ? `${item.artist} - ${item.title}` : item.title} 
-                    <span className="text-gray-400 font-normal"> ({item.year})</span>
-                  </h4>
-                  <p className="text-sm text-gray-400 mt-2 line-clamp-3">{'description' in item ? item.description : ('meaning' in item ? item.meaning : '')}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : (
-            <p className="text-center text-gray-400 mt-4">Nenhum resultado para "{query}"</p>
-        )}
-     </div>
-  );
-
-  const renderContextSelected = () => (
-    <div className="animate-fade-in">
-        <div className="p-4 bg-gray-900/30 border border-white/10 rounded-lg">
-            <h3 className="text-lg font-semibold mb-3 text-teal-300">Contexto Encontrado</h3>
-            {selectedContext && (
-                <div className="flex flex-col sm:flex-row items-start gap-4 text-left">
-                    {selectedContext.posterUrl && <img src={selectedContext.posterUrl} alt={selectedContext.title} className="w-24 h-auto object-cover rounded-md flex-shrink-0 bg-gray-600 border-2 border-gray-700" />}
-                    <div className="flex-grow">
-                        <h4 className="font-bold text-lg text-white">
-                            {'artist' in selectedContext ? `${selectedContext.artist} - ${selectedContext.title}` : selectedContext.title} 
-                            <span className="text-gray-400 font-normal"> ({selectedContext.year})</span>
-                        </h4>
-                        <p className="text-sm text-gray-400 mt-1 line-clamp-3">
-                            {'description' in selectedContext ? selectedContext.description : ('meaning' in selectedContext ? selectedContext.meaning : 'Nenhuma sinopse fornecida.')}
-                        </p>
-                    </div>
-                </div>
-            )}
-             <div className="flex flex-wrap gap-4 mt-4">
-                <button onClick={() => { setQuery(initialQuery); setResults([]); setSearchState('RESULTS'); }} className="text-sm text-gray-400 hover:text-white transition-colors">
-                    &larr; Usar um contexto diferente
-                </button>
-                 <button onClick={handleTranslateWithoutContext} className="text-sm text-gray-400 hover:text-white transition-colors">
-                    &rarr; Traduzir sem contexto
-                </button>
-            </div>
-        </div>
-        
-        <div className="mt-6">
-            <h3 className="text-lg font-semibold mb-4 text-center text-gray-300">Escolha o modo de tradução</h3>
-            <div className="flex flex-col md:flex-row gap-4 justify-center">
-                 <div className="flex-1 p-4 border border-white/10 rounded-lg bg-gray-900/30">
-                    <h4 className="font-bold text-lg">Tradução Completa</h4>
-                    <p className="text-sm text-gray-400 my-2 h-12">A IA traduzirá o arquivo inteiro de uma vez. Rápido e fácil.</p>
-                    <button onClick={() => handleStart('all')} className="w-full px-4 py-2 bg-teal-500 text-white font-bold rounded-lg hover:bg-teal-600 transition-all transform hover:scale-105">
-                        Iniciar Tradução Completa
-                    </button>
-                </div>
-                <div className="flex-1 p-4 border border-white/10 rounded-lg bg-gray-900/30">
-                    <h4 className="font-bold text-lg">Tradução por Partes</h4>
-                    <p className="text-sm text-gray-400 my-2 h-12">Traduza em blocos para maior controle e para arquivos grandes.</p>
-                    <button onClick={() => handleStart('parts')} className="w-full px-4 py-2 bg-indigo-500 text-white font-bold rounded-lg hover:bg-indigo-600 transition-all transform hover:scale-105">
-                        Iniciar por Partes
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-  );
-
-  const renderContent = () => {
-    switch (searchState) {
-        case 'CHOOSING_TYPE': return renderInitialChoice();
-        case 'SEARCHING': return renderLoading();
-        case 'NO_RESULTS': return renderNoResults();
-        case 'RESULTS': return renderManualSearch();
-        case 'CONTEXT_SELECTED': return renderContextSelected();
-        default: return null;
-    }
-  }
 
   return (
     <div className="w-full p-6 glass-effect rounded-2xl">
-        {renderContent()}
+        {searchState === 'CHOOSING_TYPE' && (
+            <div className="text-center">
+                <h3 className="text-2xl font-bold mb-6 text-gray-200">Qual o conteúdo da legenda?</h3>
+                <div className="flex gap-4">
+                    <button onClick={() => handleContentTypeSelect('movie')} className="flex-1 p-8 bg-gray-800/50 hover:bg-teal-500/20 border-2 border-transparent hover:border-teal-500 rounded-xl transition-all">
+                        <span className="text-4xl block mb-2">🎬</span>
+                        <span className="text-xl font-bold">Filme / Série</span>
+                    </button>
+                    <button onClick={() => handleContentTypeSelect('music')} className="flex-1 p-8 bg-gray-800/50 hover:bg-purple-500/20 border-2 border-transparent hover:border-purple-500 rounded-xl transition-all">
+                        <span className="text-4xl block mb-2">🎵</span>
+                        <span className="text-xl font-bold">Música / Clipe</span>
+                    </button>
+                </div>
+            </div>
+        )}
+
+        {searchState === 'SEARCHING' && (
+            <div className="text-center py-10">
+                <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-xl font-medium">Navegando no IMDb/TMDb...</p>
+            </div>
+        )}
+
+        {(searchState === 'RESULTS' || searchState === 'NO_RESULTS') && (
+            <div className="space-y-6">
+                <form onSubmit={handleManualSearch} className="flex gap-2">
+                    <input
+                        type="text"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        className="flex-grow p-3 bg-gray-900/50 border border-gray-700 rounded-lg text-white"
+                        placeholder="Buscar outro título..."
+                    />
+                    <button type="submit" className="px-6 bg-teal-500 text-white font-bold rounded-lg hover:bg-teal-600 transition-colors">
+                        Buscar
+                    </button>
+                </form>
+
+                {results.length > 0 ? (
+                    <div className="grid gap-4 max-h-[50vh] overflow-y-auto pr-2 custom-scrollbar">
+                        {results.map((item, idx) => (
+                            <div key={idx} className="p-4 bg-gray-800/50 border border-white/10 rounded-xl hover:border-teal-500 transition-all group">
+                                <h4 className="text-lg font-bold text-teal-300">
+                                    {'artist' in item ? `${item.artist} - ${item.title}` : item.title} ({item.year})
+                                </h4>
+                                <p className="text-sm text-gray-400 mt-1 line-clamp-2">
+                                    {'description' in item ? item.description : item.meaning}
+                                </p>
+                                <button onClick={() => handleContextSelect(item)} className="mt-3 w-full py-2 bg-teal-500/10 text-teal-400 font-bold rounded-lg border border-teal-500/20 group-hover:bg-teal-500 group-hover:text-white transition-all">
+                                    Selecionar este contexto
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <p className="text-center text-yellow-400">Nenhum resultado exato encontrado. Tente buscar pelo nome original.</p>
+                )}
+
+                {sources.length > 0 && (
+                    <div className="pt-4 border-t border-white/5">
+                        <p className="text-xs text-gray-500 mb-2 uppercase font-bold">Fontes da busca:</p>
+                        <div className="flex flex-wrap gap-2">
+                            {sources.map((s, i) => (
+                                <a key={i} href={s.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-teal-500/70 hover:text-teal-400 bg-teal-500/5 px-2 py-1 rounded border border-teal-500/10">
+                                    <ExternalLinkIcon className="w-3 h-3"/> {s.title}
+                                </a>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        )}
+
+        {searchState === 'CONTEXT_SELECTED' && selectedContext && (
+            <div className="space-y-6 text-center">
+                <div className="p-6 bg-teal-500/10 border border-teal-500/30 rounded-2xl">
+                    <span className="text-xs font-bold text-teal-500 uppercase">Contexto Verificado</span>
+                    <h3 className="text-2xl font-bold text-white mt-1">
+                        {'artist' in selectedContext ? `${selectedContext.artist} - ${selectedContext.title}` : selectedContext.title}
+                    </h3>
+                    <p className="text-gray-400 mt-2 text-sm italic">
+                        "O tradutor usará estas informações para garantir gírias, termos e tom adequados ao gênero."
+                    </p>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button onClick={() => handleStart('all')} className="p-6 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-teal-500/20">
+                        <span className="block text-2xl mb-1">🚀</span>
+                        Tradução Completa
+                        <span className="block text-xs font-normal opacity-70 mt-1">Ideal para legendas padrão</span>
+                    </button>
+                    <button onClick={() => handleStart('parts')} className="p-6 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/20">
+                        <span className="block text-2xl mb-1">🧩</span>
+                        Tradução em Blocos
+                        <span className="block text-xs font-normal opacity-70 mt-1">Controle total e correção em tempo real</span>
+                    </button>
+                </div>
+                
+                <button onClick={() => setSearchState('RESULTS')} className="text-sm text-gray-500 hover:text-gray-300">
+                    ← Voltar para a navegação
+                </button>
+            </div>
+        )}
     </div>
   );
 };

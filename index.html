@@ -25,17 +25,13 @@
       animation: fadeIn 0.5s ease-out forwards;
     }
     
-    @keyframes gradient-animation {
-      0% { background-position: 0% 50%; }
-      50% { background-position: 100% 50%; }
-      100% { background-position: 0% 50%; }
-    }
-
-    .aurora-bg {
-        background: radial-gradient(ellipse at top, #1f2937, #111827),
-                    radial-gradient(ellipse at bottom, #14b8a6, #111827);
-        background-size: 200% 200%;
-        animation: gradient-animation 15s ease infinite;
+    body {
+        background-color: #111827; /* Fallback color */
+        background-image: linear-gradient(rgba(17, 24, 39, 0.7), rgba(17, 24, 39, 0.9)), url('https://images.pexels.com/photos/7991579/pexels-photo-7991579.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2');
+        background-size: cover;
+        background-position: center center;
+        background-attachment: fixed;
+        background-repeat: no-repeat;
     }
 
     @keyframes subtle-pulse {
@@ -55,7 +51,7 @@
     }
   </style>
 </head>
-  <body class="aurora-bg">
+  <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
